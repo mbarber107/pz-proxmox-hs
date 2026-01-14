@@ -27,7 +27,7 @@ bash -c "$(wget -qLO - https://github.com/community-scripts/ProxmoxVE/raw/main/c
 ### Option 2: Direct from this repository
 
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/YOURUSERNAME/YOURREPO/main/ct/project-zomboid.sh)"
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/mbarber107/pz-proxmox-hs/main/ct/project-zomboid.sh)"
 ```
 
 ## Default Configuration
@@ -93,7 +93,7 @@ systemctl status project-zomboid-screen   # Check status
 Run the ct script again from Proxmox host to update:
 
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/YOURUSERNAME/YOURREPO/main/ct/project-zomboid.sh)"
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/mbarber107/pz-proxmox-hs/main/ct/project-zomboid.sh)"
 ```
 
 Or use the built-in update script from within the container:
