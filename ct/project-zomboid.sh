@@ -181,13 +181,14 @@ if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
 
   # Download and run install script
   msg_info "Running installation script inside container..."
-  INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/mbarber107/pz-proxmox-hs/main/install/project-zomboid-install.sh"
 
   pct exec "$CTID" -- bash -c "
     export BUILD_VERSION='${BUILD_VERSION}'
     apt-get update
-    apt-get install -y wget
-    wget -qO /tmp/install.sh '${INSTALL_SCRIPT_URL}'
+    apt-get install -y curl
+    curl -sfSLH 'Accept: application/vnd.github.v3.raw' \
+      'https://api.github.com/repos/mbarber107/pz-proxmox-hs/contents/install/project-zomboid-install.sh' \
+      -o /tmp/install.sh
     chmod +x /tmp/install.sh
     bash /tmp/install.sh
   "
