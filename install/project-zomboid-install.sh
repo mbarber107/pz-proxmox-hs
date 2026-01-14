@@ -67,6 +67,19 @@ if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
     libc6-i386
   msg_ok "Installed 32-bit Libraries"
 
+  msg_info "Adding non-free repository for SteamCMD"
+  # Add non-free and non-free-firmware components
+  sed -i 's/^deb \(.*\) main/deb \1 main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+  sed -i 's/^deb \(.*\) main/deb \1 main contrib non-free non-free-firmware/' /etc/apt/sources.list 2>/dev/null || true
+
+  # For newer Debian with .sources format
+  if [[ -f /etc/apt/sources.list.d/debian.sources ]]; then
+    sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+  fi
+
+  apt-get update
+  msg_ok "Added non-free repository"
+
   msg_info "Installing SteamCMD"
   echo steam steam/question select "I AGREE" | debconf-set-selections
   echo steam steam/license note '' | debconf-set-selections
@@ -389,6 +402,12 @@ $STD apt-get install -y \
   lib32stdc++6 \
   libc6-i386
 msg_ok "Installed 32-bit Libraries"
+
+msg_info "Adding non-free repository for SteamCMD"
+sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
+sed -i 's/^deb \(.*\) main$/deb \1 main contrib non-free non-free-firmware/' /etc/apt/sources.list 2>/dev/null || true
+$STD apt-get update
+msg_ok "Added non-free repository"
 
 msg_info "Installing SteamCMD"
 echo steam steam/question select "I AGREE" | debconf-set-selections
