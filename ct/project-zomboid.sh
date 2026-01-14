@@ -1,10 +1,188 @@
 #!/usr/bin/env bash
 
 # Copyright (c) 2021-2025 community-scripts ORG
-# Author: [Your GitHub Username]
+# Author: mbarber107
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 # Source: https://projectzomboid.com/
 
+# Standalone mode detection - if FUNCTIONS_FILE_PATH is not set, run standalone
+if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
+  # ============== STANDALONE MODE ==============
+  set -euo pipefail
+
+  # Colors
+  RD='\033[0;31m'
+  GN='\033[0;32m'
+  YW='\033[0;33m'
+  BL='\033[0;34m'
+  CL='\033[0m'
+
+  # Helper functions
+  msg_info() { echo -e "${BL}[INFO]${CL} $1"; }
+  msg_ok() { echo -e "${GN}[OK]${CL} $1"; }
+  msg_error() { echo -e "${RD}[ERROR]${CL} $1"; }
+  msg_warn() { echo -e "${YW}[WARN]${CL} $1"; }
+
+  # Check if running on Proxmox
+  if ! command -v pveversion &>/dev/null; then
+    msg_error "This script must be run on a Proxmox VE host"
+    exit 1
+  fi
+
+  # Check if running as root
+  if [[ $EUID -ne 0 ]]; then
+    msg_error "This script must be run as root"
+    exit 1
+  fi
+
+  APP="Project-Zomboid"
+  var_cpu="${var_cpu:-2}"
+  var_ram="${var_ram:-4096}"
+  var_disk="${var_disk:-10}"
+  var_os="${var_os:-debian}"
+  var_version="${var_version:-12}"
+  var_unprivileged="${var_unprivileged:-1}"
+
+  echo -e "${GN}"
+  echo "  ____            _           _     _____                 _     _     _ "
+  echo " |  _ \ _ __ ___ (_) ___  ___| |_  |__  /___  _ __ ___   | |__ (_) __| |"
+  echo " | |_) | '__/ _ \| |/ _ \/ __| __|   / // _ \| '_ \` _ \  | '_ \| |/ _\` |"
+  echo " |  __/| | | (_) | |  __/ (__| |_   / /| (_) | | | | | | | |_) | | (_| |"
+  echo " |_|   |_|  \___// |\___|\___|\__| /____\___/|_| |_| |_| |_.__/|_|\__,_|"
+  echo "               |__/                                                     "
+  echo -e "${CL}"
+  echo "Proxmox VE Project Zomboid Server LXC Creator"
+  echo ""
+
+  # Get next available CT ID
+  CTID=$(pvesh get /cluster/nextid)
+  msg_info "Next available CT ID: ${CTID}"
+
+  # Select storage
+  echo ""
+  msg_info "Available storage pools:"
+  pvesm status -content rootdir | awk 'NR>1 {print "  " $1 " (" $4 " available)"}'
+  echo ""
+  read -p "Enter storage pool name [local-lvm]: " STORAGE
+  STORAGE=${STORAGE:-local-lvm}
+
+  # Validate storage
+  if ! pvesm status -storage "$STORAGE" &>/dev/null; then
+    msg_error "Storage '$STORAGE' not found"
+    exit 1
+  fi
+
+  # Get container template
+  TEMPLATE="debian-12-standard_12.7-1_amd64.tar.zst"
+  TEMPLATE_PATH="/var/lib/vz/template/cache/${TEMPLATE}"
+
+  if [[ ! -f "$TEMPLATE_PATH" ]]; then
+    msg_info "Downloading Debian 12 template..."
+    pveam download local "$TEMPLATE"
+  fi
+
+  # Network configuration
+  echo ""
+  read -p "Use DHCP for network? [Y/n]: " USE_DHCP
+  USE_DHCP=${USE_DHCP:-Y}
+
+  if [[ "${USE_DHCP,,}" == "y" ]]; then
+    NET_CONFIG="name=eth0,bridge=vmbr0,ip=dhcp"
+  else
+    read -p "Enter IP address (e.g., 192.168.1.100/24): " IP_ADDR
+    read -p "Enter gateway: " GATEWAY
+    NET_CONFIG="name=eth0,bridge=vmbr0,ip=${IP_ADDR},gw=${GATEWAY}"
+  fi
+
+  # Build selection
+  echo ""
+  echo "Select Project Zomboid Build Version:"
+  echo "  1) Build 41 (Stable - Recommended)"
+  echo "  2) Build 42 (Beta/Unstable)"
+  read -p "Enter choice [1]: " BUILD_CHOICE
+  BUILD_CHOICE=${BUILD_CHOICE:-1}
+
+  if [[ "$BUILD_CHOICE" == "2" ]]; then
+    BUILD_VERSION="42"
+  else
+    BUILD_VERSION="41"
+  fi
+
+  # Hostname
+  HOSTNAME="project-zomboid"
+
+  # Create container
+  msg_info "Creating LXC container ${CTID}..."
+  pct create "$CTID" "local:vztmpl/${TEMPLATE}" \
+    --hostname "$HOSTNAME" \
+    --memory "$var_ram" \
+    --cores "$var_cpu" \
+    --rootfs "${STORAGE}:${var_disk}" \
+    --net0 "$NET_CONFIG" \
+    --unprivileged "$var_unprivileged" \
+    --features nesting=1 \
+    --onboot 1 \
+    --start 1
+
+  msg_ok "Container ${CTID} created"
+
+  # Wait for container to start
+  msg_info "Waiting for container to start..."
+  sleep 5
+
+  # Wait for network
+  msg_info "Waiting for network..."
+  for i in {1..30}; do
+    if pct exec "$CTID" -- ping -c 1 8.8.8.8 &>/dev/null; then
+      break
+    fi
+    sleep 2
+  done
+
+  # Download and run install script
+  msg_info "Running installation script inside container..."
+  INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/mbarber107/pz-proxmox-hs/main/install/project-zomboid-install.sh"
+
+  pct exec "$CTID" -- bash -c "
+    export BUILD_VERSION='${BUILD_VERSION}'
+    apt-get update
+    apt-get install -y wget
+    wget -qO /tmp/install.sh '${INSTALL_SCRIPT_URL}'
+    chmod +x /tmp/install.sh
+    bash /tmp/install.sh
+  "
+
+  # Get container IP
+  CT_IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
+
+  msg_ok "Installation complete!"
+  echo ""
+  echo -e "${GN}========================================${CL}"
+  echo -e "${GN} Project Zomboid Server Ready!${CL}"
+  echo -e "${GN}========================================${CL}"
+  echo ""
+  echo -e "Container ID: ${YW}${CTID}${CL}"
+  echo -e "Container IP: ${YW}${CT_IP}${CL}"
+  echo -e "Build Version: ${YW}${BUILD_VERSION}${CL}"
+  echo ""
+  echo "Access the server on ports:"
+  echo -e "  ${GN}UDP 16261${CL} (Game Port 1)"
+  echo -e "  ${GN}UDP 16262${CL} (Game Port 2)"
+  echo -e "  ${GN}TCP 27015${CL} (RCON - Optional)"
+  echo ""
+  echo "Next steps:"
+  echo -e "  1. Enter container: ${YW}pct enter ${CTID}${CL}"
+  echo -e "  2. Set admin password: ${YW}/opt/pzserver/setup-admin.sh${CL}"
+  echo -e "  3. Start server: ${YW}systemctl start project-zomboid-screen${CL}"
+  echo ""
+  echo -e "Server config: ${YW}/home/pzserver/Zomboid/Server/servertest.ini${CL}"
+  echo -e "Console access: ${YW}screen -r pzserver${CL} (Ctrl+A, D to detach)"
+  echo ""
+
+  exit 0
+fi
+
+# ============== COMMUNITY-SCRIPTS MODE ==============
 source /dev/stdin <<< "$FUNCTIONS_FILE_PATH"
 
 APP="Project-Zomboid"

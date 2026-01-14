@@ -1,94 +1,120 @@
 #!/usr/bin/env bash
 
 # Copyright (c) 2021-2025 community-scripts ORG
-# Author: [Your GitHub Username]
+# Author: mbarber107
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 # Source: https://projectzomboid.com/
 
-source /dev/stdin <<< "$FUNCTIONS_FILE_PATH"
+# Standalone mode detection
+if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
+  # ============== STANDALONE MODE ==============
+  set -euo pipefail
 
-color
-verb_ip6
-catch_errors
-setting_up_container
-network_check
-update_os
+  # Colors
+  RD='\033[0;31m'
+  GN='\033[0;32m'
+  YW='\033[0;33m'
+  BL='\033[0;34m'
+  CL='\033[0m'
 
-msg_info "Installing Dependencies"
-$STD apt-get install -y \
-  curl \
-  wget \
-  sudo \
-  mc \
-  software-properties-common \
-  apt-transport-https \
-  ca-certificates \
-  gnupg
-msg_ok "Installed Dependencies"
+  # Helper functions
+  msg_info() { echo -e "${BL}[INFO]${CL} $1"; }
+  msg_ok() { echo -e "${GN}[OK]${CL} $1"; }
+  msg_error() { echo -e "${RD}[ERROR]${CL} $1"; exit 1; }
+  msg_warn() { echo -e "${YW}[WARN]${CL} $1"; }
 
-msg_info "Enabling i386 Architecture"
-$STD dpkg --add-architecture i386
-$STD apt-get update
-msg_ok "Enabled i386 Architecture"
+  # Check if running as root
+  if [[ $EUID -ne 0 ]]; then
+    msg_error "This script must be run as root"
+  fi
 
-msg_info "Installing 32-bit Libraries"
-$STD apt-get install -y \
-  lib32gcc-s1 \
-  lib32stdc++6 \
-  libc6-i386
-msg_ok "Installed 32-bit Libraries"
+  echo -e "${GN}"
+  echo "  ____            _           _     _____                 _     _     _ "
+  echo " |  _ \ _ __ ___ (_) ___  ___| |_  |__  /___  _ __ ___   | |__ (_) __| |"
+  echo " | |_) | '__/ _ \| |/ _ \/ __| __|   / // _ \| '_ \` _ \  | '_ \| |/ _\` |"
+  echo " |  __/| | | (_) | |  __/ (__| |_   / /| (_) | | | | | | | |_) | | (_| |"
+  echo " |_|   |_|  \___// |\___|\___|\__| /____\___/|_| |_| |_| |_.__/|_|\__,_|"
+  echo "               |__/                                                     "
+  echo -e "${CL}"
+  echo "Project Zomboid Server Installer"
+  echo ""
 
-msg_info "Installing SteamCMD"
-# Accept Steam license non-interactively
-echo steam steam/question select "I AGREE" | debconf-set-selections
-echo steam steam/license note '' | debconf-set-selections
-$STD apt-get install -y steamcmd
-msg_ok "Installed SteamCMD"
+  msg_info "Updating system packages"
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get -y upgrade
+  msg_ok "System packages updated"
 
-msg_info "Installing Screen"
-$STD apt-get install -y screen
-msg_ok "Installed Screen"
+  msg_info "Installing Dependencies"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl \
+    wget \
+    sudo \
+    software-properties-common \
+    apt-transport-https \
+    ca-certificates \
+    gnupg
+  msg_ok "Installed Dependencies"
 
-msg_info "Creating Service User"
-useradd -m -s /bin/bash pzserver
-mkdir -p /opt/pzserver
-chown -R pzserver:pzserver /opt/pzserver
-msg_ok "Created Service User 'pzserver'"
+  msg_info "Enabling i386 Architecture"
+  dpkg --add-architecture i386
+  apt-get update
+  msg_ok "Enabled i386 Architecture"
 
-# Prompt for build version selection
-BUILD_VERSION=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
-  --title "Build Version Selection" \
-  --menu "Select Project Zomboid Build Version to Install:" 12 60 2 \
-  "41" "Build 41 (Stable - Recommended)" \
-  "42" "Build 42 (Beta/Unstable)" \
-  3>&1 1>&2 2>&3)
+  msg_info "Installing 32-bit Libraries"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    lib32gcc-s1 \
+    lib32stdc++6 \
+    libc6-i386
+  msg_ok "Installed 32-bit Libraries"
 
-# Default to Build 41 if cancelled
-if [[ -z "$BUILD_VERSION" ]]; then
-  BUILD_VERSION="41"
-  msg_info "No selection made, defaulting to Build 41 (Stable)"
-fi
+  msg_info "Installing SteamCMD"
+  echo steam steam/question select "I AGREE" | debconf-set-selections
+  echo steam steam/license note '' | debconf-set-selections
+  DEBIAN_FRONTEND=noninteractive apt-get install -y steamcmd
+  msg_ok "Installed SteamCMD"
 
-msg_info "Downloading Project Zomboid Server (Build ${BUILD_VERSION})"
-if [[ "$BUILD_VERSION" == "42" ]]; then
-  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"
-else
-  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"
-fi
+  msg_info "Installing Screen"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y screen
+  msg_ok "Installed Screen"
 
-# Store installed build version
-echo "$BUILD_VERSION" > /opt/pzserver/.pz_build_version
-chown pzserver:pzserver /opt/pzserver/.pz_build_version
+  msg_info "Creating Service User"
+  useradd -m -s /bin/bash pzserver || true
+  mkdir -p /opt/pzserver
+  chown -R pzserver:pzserver /opt/pzserver
+  msg_ok "Created Service User 'pzserver'"
 
-msg_ok "Downloaded Project Zomboid Server (Build ${BUILD_VERSION})"
+  # Build version selection - check if passed via environment or prompt
+  if [[ -z "${BUILD_VERSION:-}" ]]; then
+    echo ""
+    echo "Select Project Zomboid Build Version:"
+    echo "  1) Build 41 (Stable - Recommended)"
+    echo "  2) Build 42 (Beta/Unstable)"
+    read -p "Enter choice [1]: " BUILD_CHOICE
+    BUILD_CHOICE=${BUILD_CHOICE:-1}
 
-msg_info "Configuring Server Directories"
-# Create Zomboid directory in pzserver home for config files
-mkdir -p /home/pzserver/Zomboid/Server
-chown -R pzserver:pzserver /home/pzserver/Zomboid
+    if [[ "$BUILD_CHOICE" == "2" ]]; then
+      BUILD_VERSION="42"
+    else
+      BUILD_VERSION="41"
+    fi
+  fi
 
-# Create default server configuration
-cat <<'EOF' > /home/pzserver/Zomboid/Server/servertest.ini
+  msg_info "Downloading Project Zomboid Server (Build ${BUILD_VERSION})"
+  if [[ "$BUILD_VERSION" == "42" ]]; then
+    su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"
+  else
+    su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"
+  fi
+
+  echo "$BUILD_VERSION" > /opt/pzserver/.pz_build_version
+  chown pzserver:pzserver /opt/pzserver/.pz_build_version
+  msg_ok "Downloaded Project Zomboid Server (Build ${BUILD_VERSION})"
+
+  msg_info "Configuring Server Directories"
+  mkdir -p /home/pzserver/Zomboid/Server
+  chown -R pzserver:pzserver /home/pzserver/Zomboid
+
+  cat <<'SERVERCONFIG' > /home/pzserver/Zomboid/Server/servertest.ini
 # Project Zomboid Server Configuration
 # Generated by Proxmox VE Helper Scripts
 # Edit this file to customize your server settings
@@ -123,12 +149,7 @@ PVP=false
 SpawnPoint=0,0,0
 
 # Steam Workshop Mods
-# Add Workshop item IDs separated by semicolons
-# Example: WorkshopItems=1234567890;0987654321
 WorkshopItems=
-
-# Mod IDs (must match WorkshopItems order)
-# Example: Mods=ModFolder1;ModFolder2
 Mods=
 
 # Map (default is Muldraugh, KY)
@@ -186,6 +207,268 @@ SafetyCooldownTimer=3
 
 # Logging
 ServerPlayerID=true
+SERVERCONFIG
+
+  chown pzserver:pzserver /home/pzserver/Zomboid/Server/servertest.ini
+  msg_ok "Configured Server Directories"
+
+  msg_info "Creating systemd Service"
+  cat <<'SERVICECONFIG' > /etc/systemd/system/project-zomboid-screen.service
+[Unit]
+Description=Project Zomboid Dedicated Server
+Documentation=https://pzwiki.net/wiki/Dedicated_server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=pzserver
+Group=pzserver
+WorkingDirectory=/opt/pzserver
+
+Environment="HOME=/home/pzserver"
+Environment="LD_LIBRARY_PATH=/opt/pzserver/linux64:/opt/pzserver/natives"
+
+ExecStart=/usr/bin/screen -dmS pzserver /opt/pzserver/start-server.sh -servername servertest
+ExecStop=/usr/bin/screen -p 0 -S pzserver -X stuff "quit^M"
+
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=180
+TimeoutStopSec=120
+
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target
+SERVICECONFIG
+  msg_ok "Created systemd Service"
+
+  msg_info "Creating Admin Setup Script"
+  cat <<'ADMINSCRIPT' > /opt/pzserver/setup-admin.sh
+#!/bin/bash
+echo "========================================"
+echo " Project Zomboid Server - Initial Setup"
+echo "========================================"
+echo ""
+echo "This script will start the server for initial configuration."
+echo "During first run, you will be prompted to create an admin password."
+echo ""
+echo "After setup is complete:"
+echo "  1. Type 'quit' in the server console to stop the server"
+echo "  2. Start the server properly with: systemctl start project-zomboid-screen"
+echo ""
+echo "Server console commands:"
+echo "  - quit        : Save and stop the server"
+echo "  - save        : Force a world save"
+echo "  - players     : List connected players"
+echo "  - adduser     : Add a new user"
+echo "  - setaccesslevel <user> <level> : Set user access level"
+echo ""
+echo "Current build version: $(cat /opt/pzserver/.pz_build_version 2>/dev/null || echo 'unknown')"
+echo ""
+read -p "Press Enter to start the server for initial setup..."
+
+cd /opt/pzserver
+./start-server.sh -servername servertest
+
+echo ""
+echo "========================================"
+echo " Setup Complete"
+echo "========================================"
+echo ""
+echo "Start the server: systemctl start project-zomboid-screen"
+echo "Enable auto-start: systemctl enable project-zomboid-screen"
+echo "Access console: screen -r pzserver (Ctrl+A, D to detach)"
+echo ""
+ADMINSCRIPT
+  chmod +x /opt/pzserver/setup-admin.sh
+  chown pzserver:pzserver /opt/pzserver/setup-admin.sh
+  msg_ok "Created Admin Setup Script"
+
+  msg_info "Creating Server Management Scripts"
+  cat <<'UPDATESCRIPT' > /opt/pzserver/update-server.sh
+#!/bin/bash
+BUILD_VERSION=$(cat /opt/pzserver/.pz_build_version 2>/dev/null || echo "41")
+
+echo "Current build version: $BUILD_VERSION"
+echo "Stopping server..."
+systemctl stop project-zomboid-screen 2>/dev/null
+sleep 5
+
+echo "Updating server files..."
+if [[ "$BUILD_VERSION" == "42" ]]; then
+  /usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit
+else
+  /usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit
+fi
+
+echo "Starting server..."
+systemctl start project-zomboid-screen
+echo "Update complete!"
+UPDATESCRIPT
+  chmod +x /opt/pzserver/update-server.sh
+  chown pzserver:pzserver /opt/pzserver/update-server.sh
+
+  cat <<'BACKUPSCRIPT' > /opt/pzserver/backup-server.sh
+#!/bin/bash
+BACKUP_DIR="/home/pzserver/backups"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="pz_backup_${TIMESTAMP}.tar.gz"
+
+mkdir -p "$BACKUP_DIR"
+echo "Creating backup: ${BACKUP_FILE}"
+
+tar -czf "${BACKUP_DIR}/${BACKUP_FILE}" -C /home/pzserver Zomboid
+
+echo "Backup created: ${BACKUP_DIR}/${BACKUP_FILE}"
+echo "Backup size: $(du -h "${BACKUP_DIR}/${BACKUP_FILE}" | cut -f1)"
+BACKUPSCRIPT
+  chmod +x /opt/pzserver/backup-server.sh
+  chown pzserver:pzserver /opt/pzserver/backup-server.sh
+  msg_ok "Created Server Management Scripts"
+
+  msg_info "Setting Permissions"
+  chown -R pzserver:pzserver /opt/pzserver
+  chown -R pzserver:pzserver /home/pzserver
+  msg_ok "Set Permissions"
+
+  msg_info "Enabling Service"
+  systemctl daemon-reload
+  systemctl enable project-zomboid-screen.service
+  msg_ok "Enabled Service"
+
+  msg_info "Cleaning up"
+  apt-get -y autoremove
+  apt-get -y autoclean
+  msg_ok "Cleaned"
+
+  echo ""
+  echo -e "${GN}========================================${CL}"
+  echo -e "${GN} Installation Complete!${CL}"
+  echo -e "${GN}========================================${CL}"
+  echo ""
+  echo "Next steps:"
+  echo "  1. Run /opt/pzserver/setup-admin.sh to set admin password"
+  echo "  2. Start server: systemctl start project-zomboid-screen"
+  echo ""
+
+  exit 0
+fi
+
+# ============== COMMUNITY-SCRIPTS MODE ==============
+source /dev/stdin <<< "$FUNCTIONS_FILE_PATH"
+
+color
+verb_ip6
+catch_errors
+setting_up_container
+network_check
+update_os
+
+msg_info "Installing Dependencies"
+$STD apt-get install -y \
+  curl \
+  wget \
+  sudo \
+  mc \
+  software-properties-common \
+  apt-transport-https \
+  ca-certificates \
+  gnupg
+msg_ok "Installed Dependencies"
+
+msg_info "Enabling i386 Architecture"
+$STD dpkg --add-architecture i386
+$STD apt-get update
+msg_ok "Enabled i386 Architecture"
+
+msg_info "Installing 32-bit Libraries"
+$STD apt-get install -y \
+  lib32gcc-s1 \
+  lib32stdc++6 \
+  libc6-i386
+msg_ok "Installed 32-bit Libraries"
+
+msg_info "Installing SteamCMD"
+echo steam steam/question select "I AGREE" | debconf-set-selections
+echo steam steam/license note '' | debconf-set-selections
+$STD apt-get install -y steamcmd
+msg_ok "Installed SteamCMD"
+
+msg_info "Installing Screen"
+$STD apt-get install -y screen
+msg_ok "Installed Screen"
+
+msg_info "Creating Service User"
+useradd -m -s /bin/bash pzserver
+mkdir -p /opt/pzserver
+chown -R pzserver:pzserver /opt/pzserver
+msg_ok "Created Service User 'pzserver'"
+
+BUILD_VERSION=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
+  --title "Build Version Selection" \
+  --menu "Select Project Zomboid Build Version to Install:" 12 60 2 \
+  "41" "Build 41 (Stable - Recommended)" \
+  "42" "Build 42 (Beta/Unstable)" \
+  3>&1 1>&2 2>&3)
+
+if [[ -z "$BUILD_VERSION" ]]; then
+  BUILD_VERSION="41"
+  msg_info "No selection made, defaulting to Build 41 (Stable)"
+fi
+
+msg_info "Downloading Project Zomboid Server (Build ${BUILD_VERSION})"
+if [[ "$BUILD_VERSION" == "42" ]]; then
+  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"
+else
+  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"
+fi
+
+echo "$BUILD_VERSION" > /opt/pzserver/.pz_build_version
+chown pzserver:pzserver /opt/pzserver/.pz_build_version
+
+msg_ok "Downloaded Project Zomboid Server (Build ${BUILD_VERSION})"
+
+msg_info "Configuring Server Directories"
+mkdir -p /home/pzserver/Zomboid/Server
+chown -R pzserver:pzserver /home/pzserver/Zomboid
+
+cat <<'EOF' > /home/pzserver/Zomboid/Server/servertest.ini
+# Project Zomboid Server Configuration
+PublicName=My PZ Server
+PublicDescription=Project Zomboid Dedicated Server
+Public=false
+DefaultPort=16261
+UDPPort=16262
+MaxPlayers=16
+PingLimit=400
+Password=
+RCONPort=27015
+RCONPassword=
+PauseEmpty=true
+SpeedLimit=50
+SaveWorldEveryMinutes=30
+Open=true
+PVP=false
+SpawnPoint=0,0,0
+WorkshopItems=
+Mods=
+Map=Muldraugh, KY
+VoiceEnable=true
+VoiceMinDistance=10.0
+VoiceMaxDistance=100.0
+Voice3D=true
+DisplayUserName=true
+ShowFirstAndLastName=false
+AllowCoop=true
+SleepAllowed=false
+SleepNeeded=false
+SafetySystem=true
+ShowSafety=true
+SafetyToggleTimer=2
+SafetyCooldownTimer=3
+ServerPlayerID=true
 EOF
 
 chown pzserver:pzserver /home/pzserver/Zomboid/Server/servertest.ini
@@ -204,24 +487,14 @@ Type=forking
 User=pzserver
 Group=pzserver
 WorkingDirectory=/opt/pzserver
-
-# Environment
 Environment="HOME=/home/pzserver"
 Environment="LD_LIBRARY_PATH=/opt/pzserver/linux64:/opt/pzserver/natives"
-
-# Start in screen session for console access
 ExecStart=/usr/bin/screen -dmS pzserver /opt/pzserver/start-server.sh -servername servertest
-
-# Graceful shutdown - send quit command to save world
 ExecStop=/usr/bin/screen -p 0 -S pzserver -X stuff "quit^M"
-
-# Restart configuration
 Restart=on-failure
 RestartSec=30
 TimeoutStartSec=180
 TimeoutStopSec=120
-
-# Resource limits
 LimitNOFILE=100000
 
 [Install]
@@ -232,123 +505,55 @@ msg_ok "Created systemd Service"
 msg_info "Creating Admin Setup Script"
 cat <<'EOF' > /opt/pzserver/setup-admin.sh
 #!/bin/bash
-#
-# Project Zomboid Server - Initial Setup Script
-# This script helps you complete the first-time server configuration
-#
-
 echo "========================================"
 echo " Project Zomboid Server - Initial Setup"
 echo "========================================"
 echo ""
 echo "This script will start the server for initial configuration."
-echo "During first run, you will be prompted to:"
-echo "  1. Create an admin password"
+echo "You will be prompted to create an admin password."
 echo ""
-echo "After setup is complete:"
-echo "  1. Type 'quit' in the server console to stop the server"
-echo "  2. Start the server properly with: systemctl start project-zomboid-screen"
+echo "After setup: type 'quit' to stop, then run:"
+echo "  systemctl start project-zomboid-screen"
 echo ""
-echo "Server console commands you should know:"
-echo "  - quit        : Save and stop the server"
-echo "  - save        : Force a world save"
-echo "  - players     : List connected players"
-echo "  - adduser     : Add a new user"
-echo "  - setaccesslevel <user> <level> : Set user access (admin, moderator, etc.)"
-echo ""
-echo "Current build version: $(cat /opt/pzserver/.pz_build_version 2>/dev/null || echo 'unknown')"
-echo ""
-read -p "Press Enter to start the server for initial setup..."
+read -p "Press Enter to start..."
 
 cd /opt/pzserver
 ./start-server.sh -servername servertest
 
 echo ""
-echo "========================================"
-echo " Setup Complete"
-echo "========================================"
-echo ""
-echo "If you set an admin password, you can now:"
-echo "  1. Start the server: systemctl start project-zomboid-screen"
-echo "  2. Enable auto-start: systemctl enable project-zomboid-screen"
-echo "  3. Check status: systemctl status project-zomboid-screen"
-echo "  4. Access console: screen -r pzserver (Ctrl+A, D to detach)"
-echo ""
-echo "Server configuration file:"
-echo "  /home/pzserver/Zomboid/Server/servertest.ini"
-echo ""
-echo "Server logs:"
-echo "  /home/pzserver/Zomboid/Logs/"
-echo ""
+echo "Setup complete! Start server with: systemctl start project-zomboid-screen"
 EOF
 chmod +x /opt/pzserver/setup-admin.sh
 chown pzserver:pzserver /opt/pzserver/setup-admin.sh
 msg_ok "Created Admin Setup Script"
 
 msg_info "Creating Server Management Scripts"
-# Create a helper script for updating the server
 cat <<'EOF' > /opt/pzserver/update-server.sh
 #!/bin/bash
-#
-# Project Zomboid Server Update Script
-# Stops the server, updates via SteamCMD, and restarts
-#
-
 BUILD_VERSION=$(cat /opt/pzserver/.pz_build_version 2>/dev/null || echo "41")
-
-echo "Current build version: $BUILD_VERSION"
-echo ""
 echo "Stopping server..."
 systemctl stop project-zomboid-screen 2>/dev/null
 sleep 5
-
-echo "Updating server files..."
+echo "Updating (Build $BUILD_VERSION)..."
 if [[ "$BUILD_VERSION" == "42" ]]; then
   /usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit
 else
   /usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit
 fi
-
-echo ""
 echo "Starting server..."
 systemctl start project-zomboid-screen
-
-echo ""
-echo "Update complete! Check server status with: systemctl status project-zomboid-screen"
+echo "Done!"
 EOF
 chmod +x /opt/pzserver/update-server.sh
 chown pzserver:pzserver /opt/pzserver/update-server.sh
 
-# Create a backup script
 cat <<'EOF' > /opt/pzserver/backup-server.sh
 #!/bin/bash
-#
-# Project Zomboid Server Backup Script
-# Creates a timestamped backup of server data
-#
-
 BACKUP_DIR="/home/pzserver/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="pz_backup_${TIMESTAMP}.tar.gz"
-
 mkdir -p "$BACKUP_DIR"
-
-echo "Creating backup: ${BACKUP_FILE}"
-echo "This may take a few minutes..."
-
-# Backup the Zomboid directory (saves, configs, etc.)
-tar -czf "${BACKUP_DIR}/${BACKUP_FILE}" \
-  -C /home/pzserver \
-  Zomboid
-
-echo ""
-echo "Backup created: ${BACKUP_DIR}/${BACKUP_FILE}"
-echo "Backup size: $(du -h "${BACKUP_DIR}/${BACKUP_FILE}" | cut -f1)"
-echo ""
-echo "To restore, stop the server and extract:"
-echo "  systemctl stop project-zomboid-screen"
-echo "  tar -xzf ${BACKUP_DIR}/${BACKUP_FILE} -C /home/pzserver"
-echo "  systemctl start project-zomboid-screen"
+tar -czf "${BACKUP_DIR}/pz_backup_${TIMESTAMP}.tar.gz" -C /home/pzserver Zomboid
+echo "Backup created: ${BACKUP_DIR}/pz_backup_${TIMESTAMP}.tar.gz"
 EOF
 chmod +x /opt/pzserver/backup-server.sh
 chown pzserver:pzserver /opt/pzserver/backup-server.sh
