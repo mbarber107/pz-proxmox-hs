@@ -58,13 +58,26 @@ if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
   CTID=$(pvesh get /cluster/nextid)
   msg_info "Next available CT ID: ${CTID}"
 
+  # Check if running interactively
+  if [[ -t 0 ]]; then
+    INTERACTIVE=true
+  else
+    INTERACTIVE=false
+    msg_warn "Non-interactive mode: using defaults"
+  fi
+
   # Select storage
-  echo ""
-  msg_info "Available storage pools:"
-  pvesm status -content rootdir | awk 'NR>1 {print "  " $1 " (" $4 " available)"}'
-  echo ""
-  read -p "Enter storage pool name [local-lvm]: " STORAGE
-  STORAGE=${STORAGE:-local-lvm}
+  STORAGE="${PZ_STORAGE:-}"
+  if [[ -z "$STORAGE" ]]; then
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      echo ""
+      msg_info "Available storage pools:"
+      pvesm status -content rootdir | awk 'NR>1 {print "  " $1 " (" $4 " available)"}'
+      echo ""
+      read -p "Enter storage pool name [local-lvm]: " STORAGE
+    fi
+    STORAGE=${STORAGE:-local-lvm}
+  fi
 
   # Validate storage
   if ! pvesm status -storage "$STORAGE" &>/dev/null; then
@@ -72,40 +85,67 @@ if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
     exit 1
   fi
 
-  # Get container template
-  TEMPLATE="debian-12-standard_12.7-1_amd64.tar.zst"
+  # Get container template - find available Debian 12 template
+  msg_info "Finding Debian 12 template..."
+
+  # Update template list
+  pveam update &>/dev/null || true
+
+  # Find a Debian 12 template
+  TEMPLATE=$(pveam available -section system | grep -E "debian-12.*amd64" | head -1 | awk '{print $2}')
+
+  if [[ -z "$TEMPLATE" ]]; then
+    msg_error "No Debian 12 template found. Please run: pveam update"
+    exit 1
+  fi
+
   TEMPLATE_PATH="/var/lib/vz/template/cache/${TEMPLATE}"
 
   if [[ ! -f "$TEMPLATE_PATH" ]]; then
-    msg_info "Downloading Debian 12 template..."
+    msg_info "Downloading template: ${TEMPLATE}"
     pveam download local "$TEMPLATE"
   fi
+  msg_ok "Template ready: ${TEMPLATE}"
 
   # Network configuration
-  echo ""
-  read -p "Use DHCP for network? [Y/n]: " USE_DHCP
-  USE_DHCP=${USE_DHCP:-Y}
+  NET_CONFIG="${PZ_NET_CONFIG:-}"
+  if [[ -z "$NET_CONFIG" ]]; then
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      echo ""
+      read -p "Use DHCP for network? [Y/n]: " USE_DHCP
+      USE_DHCP=${USE_DHCP:-Y}
 
-  if [[ "${USE_DHCP,,}" == "y" ]]; then
-    NET_CONFIG="name=eth0,bridge=vmbr0,ip=dhcp"
-  else
-    read -p "Enter IP address (e.g., 192.168.1.100/24): " IP_ADDR
-    read -p "Enter gateway: " GATEWAY
-    NET_CONFIG="name=eth0,bridge=vmbr0,ip=${IP_ADDR},gw=${GATEWAY}"
+      if [[ "${USE_DHCP,,}" == "y" ]]; then
+        NET_CONFIG="name=eth0,bridge=vmbr0,ip=dhcp"
+      else
+        read -p "Enter IP address (e.g., 192.168.1.100/24): " IP_ADDR
+        read -p "Enter gateway: " GATEWAY
+        NET_CONFIG="name=eth0,bridge=vmbr0,ip=${IP_ADDR},gw=${GATEWAY}"
+      fi
+    else
+      NET_CONFIG="name=eth0,bridge=vmbr0,ip=dhcp"
+    fi
   fi
 
   # Build selection
-  echo ""
-  echo "Select Project Zomboid Build Version:"
-  echo "  1) Build 41 (Stable - Recommended)"
-  echo "  2) Build 42 (Beta/Unstable)"
-  read -p "Enter choice [1]: " BUILD_CHOICE
-  BUILD_CHOICE=${BUILD_CHOICE:-1}
+  BUILD_VERSION="${PZ_BUILD_VERSION:-}"
+  if [[ -z "$BUILD_VERSION" ]]; then
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      echo ""
+      echo "Select Project Zomboid Build Version:"
+      echo "  1) Build 41 (Stable - Recommended)"
+      echo "  2) Build 42 (Beta/Unstable)"
+      read -p "Enter choice [1]: " BUILD_CHOICE
+      BUILD_CHOICE=${BUILD_CHOICE:-1}
 
-  if [[ "$BUILD_CHOICE" == "2" ]]; then
-    BUILD_VERSION="42"
-  else
-    BUILD_VERSION="41"
+      if [[ "$BUILD_CHOICE" == "2" ]]; then
+        BUILD_VERSION="42"
+      else
+        BUILD_VERSION="41"
+      fi
+    else
+      BUILD_VERSION="41"
+    fi
   fi
 
   # Hostname
