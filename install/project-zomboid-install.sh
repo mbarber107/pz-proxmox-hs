@@ -112,12 +112,25 @@ if [[ -z "$FUNCTIONS_FILE_PATH" ]]; then
     fi
   fi
 
+  msg_info "Initializing SteamCMD (first run)"
+  su - pzserver -c "/usr/games/steamcmd +quit" || true
+  msg_ok "SteamCMD initialized"
+
   msg_info "Downloading Project Zomboid Server (Build ${BUILD_VERSION})"
-  if [[ "$BUILD_VERSION" == "42" ]]; then
-    su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"
-  else
-    su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"
-  fi
+  # Retry up to 3 times as SteamCMD can fail on first attempt
+  for attempt in 1 2 3; do
+    if [[ "$BUILD_VERSION" == "42" ]]; then
+      if su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"; then
+        break
+      fi
+    else
+      if su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"; then
+        break
+      fi
+    fi
+    msg_warn "Download attempt $attempt failed, retrying..."
+    sleep 5
+  done
 
   echo "$BUILD_VERSION" > /opt/pzserver/.pz_build_version
   chown pzserver:pzserver /opt/pzserver/.pz_build_version
@@ -437,12 +450,24 @@ if [[ -z "$BUILD_VERSION" ]]; then
   msg_info "No selection made, defaulting to Build 41 (Stable)"
 fi
 
+msg_info "Initializing SteamCMD (first run)"
+su - pzserver -c "/usr/games/steamcmd +quit" || true
+msg_ok "SteamCMD initialized"
+
 msg_info "Downloading Project Zomboid Server (Build ${BUILD_VERSION})"
-if [[ "$BUILD_VERSION" == "42" ]]; then
-  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"
-else
-  su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"
-fi
+for attempt in 1 2 3; do
+  if [[ "$BUILD_VERSION" == "42" ]]; then
+    if su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 -beta unstable validate +quit"; then
+      break
+    fi
+  else
+    if su - pzserver -c "/usr/games/steamcmd +force_install_dir /opt/pzserver +login anonymous +app_update 380870 validate +quit"; then
+      break
+    fi
+  fi
+  msg_warn "Download attempt $attempt failed, retrying..."
+  sleep 5
+done
 
 echo "$BUILD_VERSION" > /opt/pzserver/.pz_build_version
 chown pzserver:pzserver /opt/pzserver/.pz_build_version
